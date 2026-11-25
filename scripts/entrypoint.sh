@@ -1,12 +1,9 @@
 #!/bin/sh
-# Sleep for 2 seconds to ensure container is ready
-sleep 2
-
-cd /home/container
-MODIFIED_STARTUP=$(eval echo $(echo ${STARTUP} | sed -e 's/{{/${/g' -e 's/}}/}/g'))
+cd /home/container || exit 1
 
 # Make internal Docker IP address available to processes.
-export INTERNAL_IP=$(ip route get 1 | awk '{print $NF;exit}')
+INTERNAL_IP=$(ip route get 1 2>/dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "src") {print $(i + 1); exit}}')
+export INTERNAL_IP
 
 # Check if already installed
 if [ ! -e "$HOME/.installed" ]; then
@@ -15,8 +12,9 @@ if [ ! -e "$HOME/.installed" ]; then
     -0 -w "/root" \
     -b /dev -b /sys -b /proc \
     --kill-on-exit \
-    /bin/sh "/install.sh" || exit 1
+    /bin/sh /install.sh || exit $?
+    [ -e "$HOME/.installed" ] || exit 0
 fi
 
 # Run the startup helper script
-sh /helper.sh
+exec /bin/sh /helper.sh

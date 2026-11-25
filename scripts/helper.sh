@@ -1,78 +1,48 @@
 #!/bin/sh
 
-ensure_run_script_exists() {
-    # Check if common.sh exists in the container, if not copy it again
-    if [ ! -f "$HOME/common.sh" ]; then
-        cp /common.sh "$HOME/common.sh"
-        chmod +x "$HOME/common.sh"
-    fi
-    
-    # Check if run.sh exists in the container, if not copy it again
-    if [ ! -f "$HOME/run.sh" ]; then
-        cp /run.sh "$HOME/run.sh"
-        chmod +x "$HOME/run.sh"
-    fi
-}
+. /opt/pterodactyl-vps-egg/common.sh
+
+runtime_dir=/run/pterodactyl-vps-egg
+resolver="$HOME/etc/resolv.conf"
 
 # Parse port configuration
 parse_ports() {
     config_file="$HOME/vps.config"
-    port_args=""
-    
-    # Check if config file exists
-    if [ ! -f "$config_file" ]; then
-        return
-    fi
-    
-    while IFS='=' read -r key value; do
-        case "$key" in
-            ""|"#"*)
-                continue
-                ;;
-        esac
-        
-        key=$(echo "$key" | tr -d '[:space:]')
-        value=$(echo "$value" | tr -d '[:space:]')
-        
-        [ "$key" = "internalip" ] && continue
-        
-        # Check if key matches port pattern and value is not empty
-        case "$key" in
-            port[0-9]*)
-                if [ -n "$value" ]; then
-                    # Check if value is a number between 1 and 65535
-                    case "$value" in
-                        *[!0-9]*)
-                            # Not a number, skip
-                            ;;
-                        *)
-                            # It's a number, check range
-                            if [ "$value" -ge 1 ] && [ "$value" -le 65535 ]; then
-                                port_args="$port_args -p $value:$value"
-                            fi
-                            ;;
-                    esac
-                fi
-                ;;
-        esac
-    done < "$config_file"
-    
-    echo "$port_args"
+    [ -f "$config_file" ] || return 0
+
+    awk -F '=' '
+        NF == 2 {
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", $1)
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2)
+            port = $2 + 0
+            if ($1 ~ /^port[0-9]*$/ && $2 ~ /^[0-9]+$/ && port >= 1 && port <= 65535 && !seen[port]) {
+                seen[port] = 1
+                printf " -p %d:%d", port, port
+            }
+        }
+    ' "$config_file"
 }
 
 # Execute PRoot environment
 exec_proot() {
     port_args=$(parse_ports)
     
-    /usr/local/bin/proot \
+    exec /usr/local/bin/proot \
     --rootfs="${HOME}" \
     -0 -w "${HOME}" \
     -b /dev -b /sys -b /proc \
+    -b "/opt/pterodactyl-vps-egg:$runtime_dir!" \
     $port_args \
     --kill-on-exit \
-    /bin/sh "/run.sh"
+    /bin/sh "$runtime_dir/run.sh"
 }
 
-ensure_run_script_exists
+# Fill in a missing resolver or migrate the default from an older image.
+legacy_resolver=$(printf 'nameserver 1.1.1.1\nnameserver 1.0.0.1\n')
+if [ -L "$resolver" ]; then
+    :
+elif [ ! -e "$resolver" ] || { [ -f "$resolver" ] && [ "$(cat "$resolver")" = "$legacy_resolver" ]; }; then
+    copy_container_dns "$resolver" || exit 1
+fi
 
 exec_proot

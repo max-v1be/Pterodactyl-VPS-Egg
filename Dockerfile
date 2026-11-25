@@ -11,7 +11,6 @@ ENV LANG=en_US.UTF-8
 RUN apk update && \
     apk add --no-cache \
         bash \
-        jq \
         curl \
         ca-certificates \
         iproute2 \
@@ -22,7 +21,7 @@ RUN apk update && \
 RUN ARCH=$(uname -m) && \
     mkdir -p /usr/local/bin && \
     proot_url="https://github.com/ysdragon/proot-static/releases/download/v${PROOT_VERSION}/proot-${ARCH}-static" && \
-    curl -Ls "$proot_url" -o /usr/local/bin/proot && \
+    curl -fLSs --connect-timeout 15 "$proot_url" -o /usr/local/bin/proot && \
     chmod 755 /usr/local/bin/proot
 
 # Create a non-root user
@@ -40,12 +39,11 @@ WORKDIR /home/container
 COPY --chown=container:container ./scripts/entrypoint.sh /entrypoint.sh
 COPY --chown=container:container ./scripts/install.sh /install.sh
 COPY --chown=container:container ./scripts/helper.sh /helper.sh
-COPY --chown=container:container ./scripts/run.sh /run.sh
-COPY --chown=container:container ./scripts/common.sh /common.sh
-COPY --chown=container:container ./scripts/vnc/install.sh /vnc_install.sh
+COPY ./scripts/run.sh ./scripts/common.sh /opt/pterodactyl-vps-egg/
+COPY ./scripts/vnc/install.sh /opt/pterodactyl-vps-egg/vnc_install.sh
 
 # Make the copied scripts executable
-RUN chmod +x /entrypoint.sh /install.sh /helper.sh /run.sh /common.sh /vnc_install.sh
+RUN chmod +x /entrypoint.sh /install.sh /helper.sh
 
 # Set the default command
 CMD ["/bin/sh", "/entrypoint.sh"]

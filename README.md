@@ -2,14 +2,15 @@
 
 # Pterodactyl VPS Egg
 
-[![License](https://img.shields.io/github/license/ysdragon/Pterodactyl-VPS-Egg?style=for-the-badge)](https://github.com/ysdragon/Pterodactyl-VPS-Egg/blob/main/LICENSE)
-[![CodeFactor](https://img.shields.io/codefactor/grade/github/ysdragon/pterodactyl-vps-egg?style=for-the-badge)](https://www.codefactor.io/repository/github/ysdragon/pterodactyl-vps-egg)
-[![GitHub Stars](https://img.shields.io/github/stars/ysdragon/Pterodactyl-VPS-Egg?style=for-the-badge)](https://github.com/ysdragon/Pterodactyl-VPS-Egg/stargazers)
-[![GitHub Issues](https://img.shields.io/github/issues/ysdragon/Pterodactyl-VPS-Egg?style=for-the-badge)](https://github.com/ysdragon/Pterodactyl-VPS-Egg/issues)
+**Cloudflare-free fork by max-v1be.** The [original author](https://github.com/ysdragon) is ysdragon.
+
+[![License](https://img.shields.io/github/license/max-v1be/Pterodactyl-VPS-Egg?style=for-the-badge)](https://github.com/max-v1be/Pterodactyl-VPS-Egg/blob/main/LICENSE)
+[![GitHub Stars](https://img.shields.io/github/stars/max-v1be/Pterodactyl-VPS-Egg?style=for-the-badge)](https://github.com/max-v1be/Pterodactyl-VPS-Egg/stargazers)
+[![GitHub Issues](https://img.shields.io/github/issues/max-v1be/Pterodactyl-VPS-Egg?style=for-the-badge)](https://github.com/max-v1be/Pterodactyl-VPS-Egg/issues)
 
 **A powerful and lightweight Virtual Private Server (VPS) egg for Pterodactyl Panel**
 
-*Supporting multiple architectures and 20+ Linux distributions*
+*Linux guests on AMD64, ARM64, and RISCV64*
 
 [📋 Quick Start](#-quick-start) • [🔧 Commands](#-available-custom-commands) • [🔐 SSH Setup](#-ssh-configuration) • [🖥️ GUI/VNC Setup](#%EF%B8%8F-guiremote-desktop-configuration) • [🤝 Contributing](#-contributing)
 
@@ -22,7 +23,7 @@
 - 🚀 **Easy Deployment** - One-click installation and setup
 - 🔧 **Customizable** - Flexible configurations for various use cases
 - 🏗️ **Multi-Architecture** - Support for AMD64, ARM64, and RISCV64
-- 🐧 **20+ Linux Distros** - Wide range of operating systems supported
+- 🐧 **Linux guests** - The installer lists releases for the server architecture
 - 🔌 **Port Management** - TCP/UDP support with dynamic port mapping
 - 🖥️ **GUI/Remote Desktop** - VNC server with browser access via noVNC
 
@@ -66,19 +67,29 @@
 
 ### 📥 Installation
 
+Build the runtime image from this checkout and push it to a registry your Pterodactyl node can access. Replace the example image address with your own registry and tag.
+
+```sh
+docker build -t registry.example.com/your-account/pterodactyl-vps-egg:cloudflare-free .
+docker push registry.example.com/your-account/pterodactyl-vps-egg:cloudflare-free
+```
+
 1. **Download the Egg**
-   - Download the [`egg-vps.json`](egg-vps.json) configuration file from this repository.
+   - Open [`egg-vps.json`](egg-vps.json) in this branch or release and use **Download raw file** on GitHub.
 
 2. **Import to Pterodactyl**
    - Navigate to your Pterodactyl Admin Panel
    - Go to **Nests** > **Import Egg**
    - Upload the `egg-vps.json` file
-   - Configure the egg settings as needed
+   - Add your published runtime image to the egg's Docker image list
 
 3. **Deploy Your VPS**
    - Create a new server using the VPS egg
+   - Select your published runtime image. The preset image addresses in the export point to upstream builds.
    - Configure system resources (RAM, CPU, Disk, etc.)
    - Start your instance
+
+Existing installs load the new console after an image update and restart. Put persistent startup commands in `/autorun.sh`. Available Linux releases depend on the architecture and the [Linux Containers image catalog](https://images.linuxcontainers.org/images/).
 
 ### 🖥️ First Steps
 
@@ -100,16 +111,15 @@ The VPS egg includes several built-in commands to help you manage your server:
 | `history` | Show command history | `history` |
 | `reinstall` | Reinstall the operating system | `reinstall` |
 | `install-ssh` | Install the custom SSH server | `install-ssh` |
-| `status` | Show system status information | `status` |
+| `status` | Show the OS release, kernel, architecture, and system status | `status` |
 | `backup` | Create a system backup | `backup` |
 | `restore` | Restore a system backup | `restore <backup_file>` |
 | `install-gui` | Install desktop environment + VNC server | `install-gui` |
+| `reinstall-gui` | Reinstall the desktop environment and VNC | `reinstall-gui` |
 | `start-vnc` | Start the VNC server | `start-vnc` |
 | `stop-vnc` | Stop the VNC server | `stop-vnc` |
 | `start-novnc` | Start noVNC for browser access | `start-novnc` |
 | `stop-novnc` | Stop noVNC | `stop-novnc` |
-| `start-tunnel` | Start Cloudflare tunnel (public URL) | `start-tunnel` |
-| `stop-tunnel` | Stop Cloudflare tunnel | `stop-tunnel` |
 | `gui-status` | Show GUI server status | `gui-status` |
 
 > [!NOTE]
@@ -219,7 +229,7 @@ The configuration file is located at `/gui_config.yml` and is automatically crea
 | `port` | Port number for noVNC web interface | `6080` |
 
 > [!NOTE]
-> Remember to configure the VNC and noVNC ports in your Pterodactyl panel allocations!
+> Assign the port you plan to access as a Pterodactyl allocation. For an additional allocation, enter the corresponding port number in one of the egg's `PORT 2`–`PORT 20` startup variables. Use the same port number in `/gui_config.yml`.
 
 > [!WARNING]
 > The default VNC password should be changed immediately after installation for security reasons.
@@ -246,9 +256,10 @@ novnc:
 
 ### Accessing Your Desktop
 
-1. **Via VNC Client**: Connect to `<server-ip>:<vnc_port>` using any VNC client
-2. **Via Browser (noVNC)**: Navigate to `http://<server-ip>:<novnc_port>` in your web browser
-3. **Via Cloudflare Tunnel**: Use `start-tunnel` for a public URL (useful when behind NAT)
+1. For a VNC client, run `start-vnc` and connect to the address and VNC port assigned by your hosting provider.
+2. For browser access, run `start-novnc` and open `http://<server-ip>:<novnc_port>/vnc.html`. The guest needs the noVNC web files and `websockify`.
+
+Browser access requires a reachable noVNC allocation. The VNC port can remain internal when you only use noVNC.
 
 ## 🤝 Contributing
 

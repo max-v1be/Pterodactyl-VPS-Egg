@@ -1,19 +1,6 @@
 #!/bin/sh
 
-if [ -f "/common.sh" ]; then
-    . /common.sh
-elif [ -f "$HOME/common.sh" ]; then
-    . "$HOME/common.sh"
-else
-    RED='\033[0;31m'
-    GREEN='\033[0;32m'
-    YELLOW='\033[0;33m'
-    CYAN='\033[0;36m'
-    NC='\033[0m'
-    log() {
-        printf "${3}[$1]${NC} $2\n"
-    }
-fi
+. "${0%/*}/common.sh"
 
 VNC_DIR="$HOME/.vnc"
 GUI_CONFIG_FILE="/gui_config.yml"
@@ -42,7 +29,9 @@ get_port_input() {
     default_port="$2"
 
     printf "${YELLOW}Enter $server_type port (default: $default_port): ${NC}\n" >&2
-    read -r port_input
+    read_console_line || return 2
+    [ "$REPLY" = "exit" ] && return 2
+    port_input=$REPLY
 
     if [ -z "$port_input" ]; then
         echo "$default_port"
@@ -55,7 +44,7 @@ get_port_input() {
             echo "$default_port"
             ;;
         *)
-            if [ "$port_input" -ge 1 ] && [ "$port_input" -le 65535 ]; then
+            if [ "$port_input" -ge 1 ] 2>/dev/null && [ "$port_input" -le 65535 ]; then
                 echo "$port_input"
             else
                 log "WARNING" "Port out of range, using default: $default_port" "$YELLOW" >&2
@@ -336,9 +325,10 @@ main() {
     log "INFO" "Detected distribution: $distro" "$GREEN"
 
     print_de_selection_menu
-    read -r de_choice
+    read_console_line || return 2
 
-    case "$de_choice" in
+    case "$REPLY" in
+        exit) return 2 ;;
         0)
             log "INFO" "Installation cancelled" "$YELLOW"
             return 0
@@ -353,11 +343,13 @@ main() {
             ;;
     esac
 
-    vnc_port=$(get_port_input "VNC" "5901")
-    novnc_port=$(get_port_input "noVNC (web)" "6080")
+    vnc_port=$(get_port_input "VNC" "5901") || return 2
+    novnc_port=$(get_port_input "noVNC (web)" "6080") || return 2
 
     printf "${YELLOW}Enter VNC password: ${NC}\n"
-    read -r gui_password
+    read_console_line || return 2
+    [ "$REPLY" = "exit" ] && return 2
+    gui_password=$REPLY
     if [ -z "$gui_password" ]; then
         gui_password="password"
         log "WARNING" "Using default password 'password' - CHANGE THIS!" "$RED"
@@ -370,16 +362,20 @@ main() {
         return 1
     fi
 
-    install_vnc_server "$distro"
+    install_vnc_server "$distro" </dev/null
+    if ! { command -v Xtigervnc || command -v Xvnc || command -v x11vnc; } >/dev/null 2>&1; then
+        log "ERROR" "VNC server was not installed." "$RED"
+        return 1
+    fi
     setup_vnc "$de_startup" "$vnc_port" "$gui_password"
 
-    save_config "$de" "$vnc_port" "$gui_password" "$novnc_port" "$de_startup"
+    save_config "$de" "$vnc_port" "$gui_password" "$novnc_port" "$de_startup" || return 1
 
     printf "\n"
     log "SUCCESS" "Installation completed!" "$GREEN"
     printf "\n${CYAN}Connection Information:${NC}\n"
     printf "  VNC Server:    port $vnc_port\n"
-    printf "  noVNC (Web):   http://<server-ip>:$novnc_port\n"
+    printf '  noVNC (Web):   http://<server-ip>:%s/vnc.html\n' "$novnc_port"
     printf "  Start command: start-vnc\n"
     printf "\n"
     log "WARNING" "Remember to configure these ports in your Pterodactyl panel!" "$YELLOW"

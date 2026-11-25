@@ -1,28 +1,15 @@
 #!/bin/sh
 
 # Common color definitions
-PURPLE='\033[0;35m'
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
-BLUE='\033[0;34m'
 CYAN='\033[0;36m'
-WHITE='\033[1;37m'
-BOLD='\033[1m'
-DIM='\033[2m'
 NC='\033[0m'
 
 # Common logger function
 log() {
-    level=$1
-    message=$2
-    color=$3
-    
-    if [ -z "$color" ]; then
-        color="$NC"
-    fi
-    
-    printf "${color}[$level]${NC} $message\n"
+    printf '%b[%s]%b %s\n' "${3:-$NC}" "$1" "$NC" "$2"
 }
 
 # Function to detect architecture
@@ -45,63 +32,45 @@ detect_architecture() {
     esac
 }
 
-# Function to print the main banner
-print_main_banner() {
-    printf "\033c"
-    printf "${CYAN}╔═══════════════════════════════════════════════════════════════════════════════╗${NC}\n"
-    printf "${CYAN}║                                                                               ║${NC}\n"
-    printf "${CYAN}║            ${PURPLE}${BOLD}██╗   ██╗██████╗ ███████╗    ███████╗ ██████╗  ██████╗${CYAN}             ║${NC}\n"
-    printf "${CYAN}║            ${PURPLE}${BOLD}██║   ██║██╔══██╗██╔════╝    ██╔════╝██╔════╝ ██╔════╝${CYAN}             ║${NC}\n"
-    printf "${CYAN}║            ${PURPLE}${BOLD}██║   ██║██████╔╝███████╗    █████╗  ██║  ███╗██║  ███╗${CYAN}            ║${NC}\n"
-    printf "${CYAN}║            ${PURPLE}${BOLD}╚██╗ ██╔╝██╔═══╝ ╚════██║    ██╔══╝  ██║   ██║██║   ██║${CYAN}            ║${NC}\n"
-    printf "${CYAN}║             ${PURPLE}${BOLD}╚████╔╝ ██║     ███████║    ███████╗╚██████╔╝╚██████╔╝${CYAN}            ║${NC}\n"
-    printf "${CYAN}║              ${PURPLE}${BOLD}╚═══╝  ╚═╝     ╚══════╝    ╚══════╝ ╚═════╝  ╚═════╝${CYAN}             ║${NC}\n"
-    printf "${CYAN}║                                                                               ║${NC}\n"
-    printf "${CYAN}║                      ${GREEN}✨  Lightweight • Fast • Reliable ✨${CYAN}                       ║${NC}\n"
-    printf "${CYAN}║                                                                               ║${NC}\n"
-    printf "${CYAN}║                           ${DIM}© 2021 - $(date +%Y) ${PURPLE}@ysdragon${CYAN}                             ║${NC}\n"
-    printf "${CYAN}║                                                                               ║${NC}\n"
-    printf "${CYAN}╚═══════════════════════════════════════════════════════════════════════════════╝${NC}\n"
-    printf "\n"
+# Read a complete console line, accepting CRLF as well as LF.
+read_console_line() {
+    IFS= read -r REPLY || return 1
+    REPLY=${REPLY%"$CONSOLE_CR"}
 }
 
-# Function to print the help banner
+CONSOLE_CR=$(printf '\r')
+
+copy_container_dns() {
+    dns_copy=$(mktemp "${1}.XXXXXX") || return 1
+    if cat /etc/resolv.conf > "$dns_copy" &&
+        chmod 644 "$dns_copy" &&
+        mv -fT "$dns_copy" "$1"; then
+        return 0
+    fi
+    rm -f "$dns_copy"
+    log "ERROR" "Could not copy the container DNS configuration to $1." "$RED" >&2
+    return 1
+}
+
 print_help_banner() {
-    printf "${BLUE}╔═══════════════════════════════════════════════════════════════════════════════╗${NC}\n"
-    printf "${BLUE}║                                                                               ║${NC}\n"
-    printf "${BLUE}║                           ${WHITE}${BOLD}📋  AVAILABLE COMMANDS 📋${BLUE}                             ║${NC}\n"
-    printf "${BLUE}║                                                                               ║${NC}\n"
-    printf "${BLUE}╠═══════════════════════════════════════════════════════════════════════════════╣${NC}\n"
-    printf "${BLUE}║                                                                               ║${NC}\n"
-    printf "${BLUE}║  ${CYAN}🧹  ${YELLOW}${BOLD}clear, cls${NC}        ${GREEN}▶  ${WHITE}Clear the terminal screen${BLUE}                            ║${NC}\n"
-    printf "${BLUE}║  ${RED}🔌  ${YELLOW}${BOLD}exit${NC}              ${GREEN}▶  ${WHITE}Shutdown the container server${BLUE}                        ║${NC}\n"
-    printf "${BLUE}║  ${PURPLE}📜  ${YELLOW}${BOLD}history${NC}           ${GREEN}▶  ${WHITE}Display command history${BLUE}                              ║${NC}\n"
-    printf "${BLUE}║  ${CYAN}🔄  ${YELLOW}${BOLD}reinstall${NC}         ${GREEN}▶  ${WHITE}Reinstall the operating system${BLUE}                       ║${NC}\n"
-    printf "${BLUE}║  ${GREEN}🔐  ${YELLOW}${BOLD}install-ssh${NC}       ${GREEN}▶  ${WHITE}Install custom SSH server${BLUE}                            ║${NC}\n"
-    printf "${BLUE}║  ${BLUE}📊  ${YELLOW}${BOLD}status${NC}            ${GREEN}▶  ${WHITE}Show detailed system status${BLUE}                          ║${NC}\n"
-    printf "${BLUE}║  ${YELLOW}💾  ${YELLOW}${BOLD}backup${NC}            ${GREEN}▶  ${WHITE}Create a complete system backup${BLUE}                      ║${NC}\n"
-    printf "${BLUE}║  ${PURPLE}📥  ${YELLOW}${BOLD}restore${NC}           ${GREEN}▶  ${WHITE}Restore from a system backup${BLUE}                         ║${NC}\n"
-    printf "${BLUE}║  ${WHITE}❓  ${YELLOW}${BOLD}help${NC}              ${GREEN}▶  ${WHITE}Display this help information${BLUE}                        ║${NC}\n"
-    printf "${BLUE}║                                                                               ║${NC}\n"
-    printf "${BLUE}╠═══════════════════════════════════════════════════════════════════════════════╣${NC}\n"
-    printf "${BLUE}║                                                                               ║${NC}\n"
-    printf "${BLUE}║                          ${WHITE}${BOLD}🖥  GUI / REMOTE DESKTOP 🖥${BLUE}                            ║${NC}\n"
-    printf "${BLUE}║                                                                               ║${NC}\n"
-    printf "${BLUE}╠═══════════════════════════════════════════════════════════════════════════════╣${NC}\n"
-    printf "${BLUE}║                                                                               ║${NC}\n"
-    printf "${BLUE}║  ${CYAN}💻  ${YELLOW}${BOLD}install-gui${NC}       ${GREEN}▶  ${WHITE}Install desktop environment + VNC${BLUE}                    ║${NC}\n"
-    printf "${BLUE}║  ${GREEN}🟢  ${YELLOW}${BOLD}start-vnc${NC}         ${GREEN}▶  ${WHITE}Start VNC server${BLUE}                                     ║${NC}\n"
-    printf "${BLUE}║  ${RED}🔴  ${YELLOW}${BOLD}stop-vnc${NC}          ${GREEN}▶  ${WHITE}Stop VNC server${BLUE}                                      ║${NC}\n"
-    printf "${BLUE}║  ${GREEN}🌐  ${YELLOW}${BOLD}start-novnc${NC}       ${GREEN}▶  ${WHITE}Start noVNC (browser access)${BLUE}                         ║${NC}\n"
-    printf "${BLUE}║  ${RED}🌐  ${YELLOW}${BOLD}stop-novnc${NC}        ${GREEN}▶  ${WHITE}Stop noVNC${BLUE}                                           ║${NC}\n"
-    printf "${BLUE}║  ${GREEN}🚇  ${YELLOW}${BOLD}start-tunnel${NC}      ${GREEN}▶  ${WHITE}Start Cloudflare tunnel (public URL)${BLUE}                 ║${NC}\n"
-    printf "${BLUE}║  ${RED}🚇  ${YELLOW}${BOLD}stop-tunnel${NC}       ${GREEN}▶  ${WHITE}Stop Cloudflare tunnel${BLUE}                               ║${NC}\n"
-    printf "${BLUE}║  ${PURPLE}📊  ${YELLOW}${BOLD}gui-status${NC}        ${GREEN}▶  ${WHITE}Show GUI server status${BLUE}                               ║${NC}\n"
-    printf "${BLUE}║                                                                               ║${NC}\n"
-    printf "${BLUE}╠═══════════════════════════════════════════════════════════════════════════════╣${NC}\n"
-    printf "${BLUE}║                                                                               ║${NC}\n"
-    printf "${BLUE}║                     ${DIM}💡 Tip: Type any command to get started!${BLUE}                   ║${NC}\n"
-    printf "${BLUE}║                                                                               ║${NC}\n"
-    printf "${BLUE}╚═══════════════════════════════════════════════════════════════════════════════╝${NC}\n"
-    printf "\n"
+    cat <<'EOF'
+Available commands
+  help                  Show available commands
+  clear, cls            Clear the console
+  exit                  Stop the server
+  history               Show command history
+  status                Show OS and system status
+  reinstall             Reinstall the operating system
+  install-ssh           Install the custom SSH server
+  backup                Create a system backup
+  restore <backup_file> Restore a system backup
+
+GUI / remote desktop
+  install-gui           Install a desktop environment and VNC
+  reinstall-gui         Reinstall the desktop environment and VNC
+  start-vnc, stop-vnc   Start or stop VNC
+  start-novnc           Start noVNC for browser access
+  stop-novnc            Stop noVNC
+  gui-status            Show VNC and noVNC status
+EOF
 }

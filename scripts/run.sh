@@ -1,44 +1,17 @@
 #!/bin/sh
 
 # Source common functions and variables
-. /common.sh
+runtime_dir=${0%/*}
+. "$runtime_dir/common.sh"
 
 # Configuration
 HOSTNAME="MyVPS"
 HISTORY_FILE="${HOME}/.custom_shell_history"
 MAX_HISTORY=1000
 
-# Check if not installed
-if [ ! -e "/.installed" ]; then
-    # Check if rootfs.tar.xz or rootfs.tar.gz exists and remove them if they do
-    if [ -f "/rootfs.tar.xz" ]; then
-        rm -f "/rootfs.tar.xz"
-    fi
-    
-    if [ -f "/rootfs.tar.gz" ]; then
-        rm -f "/rootfs.tar.gz"
-    fi
-    
-    # Wipe the files we downloaded into /tmp previously
-    rm -rf /tmp/sbin
-
-    # Add DNS Resolver nameservers to resolv.conf
-    printf "nameserver 1.1.1.1\nnameserver 1.0.0.1\n" > /etc/resolv.conf
-    
-    # Mark as installed.
-    touch "/.installed"
-fi
-
-# Check if the autorun script exists
 if [ ! -e "/autorun.sh" ]; then
-    touch /autorun.sh
-    chmod +x /autorun.sh
+    touch /autorun.sh && chmod +x /autorun.sh || exit 1
 fi
-
-printf "\033c"
-printf "${GREEN}Starting..${NC}\n"
-sleep 1
-printf "\033c"
 
 # Function to handle cleanup on exit
 cleanup() {
@@ -46,39 +19,19 @@ cleanup() {
     exit 0
 }
 
-# Function to get formatted directory
-get_formatted_dir() {
-    current_dir="$PWD"
-    case "$current_dir" in
-        "$HOME"*)
-            printf "~${current_dir#$HOME}"
-        ;;
-        *)
-            printf "$current_dir"
-        ;;
-    esac
-}
-
-print_instructions() {
-    log "INFO" "Type 'help' to view a list of available custom commands." "$YELLOW"
-}
-
-# Function to print prompt
 print_prompt() {
-    user="$1"
-    printf "\n${GREEN}${user}@${HOSTNAME}${NC}:${RED}$(get_formatted_dir)${NC}# "
+    case "$PWD" in
+        "$HOME"|"$HOME"/*) prompt_dir="~${PWD#"$HOME"}" ;;
+        *) prompt_dir=$PWD ;;
+    esac
+    printf '%broot@%s%b:%b%s%b#\n' "$GREEN" "$HOSTNAME" "$NC" "$RED" "$prompt_dir" "$NC"
 }
 
-# Function to save command to history
 save_to_history() {
-    cmd="$1"
-    if [ -n "$cmd" ] && [ "$cmd" != "exit" ]; then
-        printf "$cmd\n" >> "$HISTORY_FILE"
-        # Keep only last MAX_HISTORY lines
-        if [ -f "$HISTORY_FILE" ]; then
-            tail -n "$MAX_HISTORY" "$HISTORY_FILE" > "$HISTORY_FILE.tmp"
+    if [ -n "$1" ] && [ "$1" != "exit" ]; then
+        printf '%s\n' "$1" >> "$HISTORY_FILE"
+        tail -n "$MAX_HISTORY" "$HISTORY_FILE" > "$HISTORY_FILE.tmp" &&
             mv "$HISTORY_FILE.tmp" "$HISTORY_FILE"
-        fi
     fi
 }
 
@@ -86,7 +39,7 @@ save_to_history() {
 reinstall() {    
     log "INFO" "Reinstalling the OS..." "$YELLOW"
     
-    find / -mindepth 1 -xdev -delete > /dev/null 2>&1
+    find / -mindepth 1 -xdev ! -path "$runtime_dir" ! -path "$runtime_dir/*" -delete > /dev/null 2>&1
 }
 
 install_wget() {
@@ -127,14 +80,18 @@ install_wget() {
 GUI_CONFIG_FILE="/gui_config.yml"
 VNC_DIR="$HOME/.vnc"
 
+vnc_is_running() {
+    pgrep -x 'Xtigervnc|Xvnc|Xtightvnc|x11vnc' > /dev/null 2>&1
+}
+
 install_gui() {
     if [ -f "/gui_config.yml" ]; then
         log "WARNING" "GUI is already installed. Run 'reinstall-gui' to reinstall." "$YELLOW"
         return 1
     fi
     
-    if [ -f "/vnc_install.sh" ]; then
-        sh /vnc_install.sh install
+    if [ -f "$runtime_dir/vnc_install.sh" ]; then
+        sh "$runtime_dir/vnc_install.sh" install
     else
         log "ERROR" "GUI installation script not found." "$RED"
         return 1
@@ -185,7 +142,7 @@ start_vnc() {
         return 1
     fi
     
-    if pgrep -x "Xvnc" > /dev/null 2>&1 || pgrep -x "Xtightvnc" > /dev/null 2>&1; then
+    if vnc_is_running; then
         log "WARNING" "VNC server is already running." "$YELLOW"
         return 0
     fi
@@ -271,22 +228,22 @@ start_vnc() {
         sleep 2
     }
     
-    VNC_SECURITY="-SecurityTypes None"
-    if [ -n "$VNC_PASSWORD" ] && [ "$VNC_PASSWORD" != "" ]; then
-        mkdir -p "$HOME/.vnc" 2>/dev/null
-        printf "%s\n%s\nn\n" "$VNC_PASSWORD" "$VNC_PASSWORD" | vncpasswd "$HOME/.vnc/passwd" > /dev/null 2>&1
-        if [ -f "$HOME/.vnc/passwd" ]; then
-            VNC_SECURITY="-SecurityTypes VncAuth -PasswordFile $HOME/.vnc/passwd"
+    set -- -SecurityTypes None
+    if [ -n "$VNC_PASSWORD" ] && { command -v Xtigervnc || command -v Xvnc; } > /dev/null 2>&1; then
+        if ! (umask 077; printf '%s\n' "$VNC_PASSWORD" | vncpasswd -f > "$VNC_DIR/passwd"); then
+            log "ERROR" "Failed to configure VNC authentication." "$RED"
+            return 1
         fi
+        set -- -SecurityTypes VncAuth -PasswordFile "$VNC_DIR/passwd"
     fi
     
     if command -v Xtigervnc > /dev/null 2>&1; then
-        Xtigervnc ":$VNC_DISPLAY_NUM" -geometry 1280x720 -depth 24 -rfbport "$VNC_PORT" $VNC_SECURITY -pn -ac &
+        Xtigervnc ":$VNC_DISPLAY_NUM" -geometry 1280x720 -depth 24 -rfbport "$VNC_PORT" "$@" -pn -ac &
         sleep 2
         start_desktop_env
         
     elif command -v Xvnc > /dev/null 2>&1; then
-        Xvnc ":$VNC_DISPLAY_NUM" -geometry 1280x720 -depth 24 -rfbport "$VNC_PORT" $VNC_SECURITY -pn -ac &
+        Xvnc ":$VNC_DISPLAY_NUM" -geometry 1280x720 -depth 24 -rfbport "$VNC_PORT" "$@" -pn -ac &
         sleep 2
         start_desktop_env
         
@@ -308,7 +265,7 @@ start_vnc() {
         return 1
     fi
     
-    if pgrep -f "Xvnc.*:$VNC_DISPLAY_NUM" > /dev/null 2>&1 || pgrep -f "Xtigervnc.*:$VNC_DISPLAY_NUM" > /dev/null 2>&1 || pgrep -f "x11vnc" > /dev/null 2>&1; then
+    if vnc_is_running; then
         log "SUCCESS" "VNC server started on port $VNC_PORT (display :$VNC_DISPLAY_NUM)" "$GREEN"
         log "INFO" "Connect using: <server-ip>:$VNC_PORT" "$YELLOW"
     else
@@ -318,6 +275,11 @@ start_vnc() {
 }
 
 stop_vnc() {
+    if [ ! -f "$GUI_CONFIG_FILE" ]; then
+        log "ERROR" "GUI not installed. Run 'install-gui' first." "$RED"
+        return 1
+    fi
+
     log "INFO" "Stopping VNC server..." "$YELLOW"
     
     parse_gui_config
@@ -352,130 +314,38 @@ start_novnc() {
         return 0
     fi
     
-    start_vnc
-    
-    log "INFO" "Starting noVNC on port $NOVNC_PORT..." "$YELLOW"
-    
-    NOVNC_PATH=""
-    if [ -d "/usr/share/novnc" ]; then
-        NOVNC_PATH="/usr/share/novnc"
-    elif [ -d "/usr/share/webapps/novnc" ]; then
-        NOVNC_PATH="/usr/share/webapps/novnc"
-    fi
-    
-    if command -v websockify > /dev/null 2>&1; then
-        if [ -n "$NOVNC_PATH" ]; then
-            websockify --web="$NOVNC_PATH" "$NOVNC_PORT" localhost:"$VNC_PORT" > /dev/null 2>&1 &
-        else
-            websockify "$NOVNC_PORT" localhost:"$VNC_PORT" > /dev/null 2>&1 &
-        fi
-        sleep 2
-        log "SUCCESS" "noVNC started on port $NOVNC_PORT" "$GREEN"
-        log "INFO" "Open in browser: http://<server-ip>:$NOVNC_PORT/vnc.html" "$YELLOW"
-    else
+    if ! command -v websockify > /dev/null 2>&1; then
         log "ERROR" "websockify not found. noVNC may not be installed." "$RED"
         return 1
     fi
+
+    if [ -f "/usr/share/novnc/vnc.html" ]; then
+        NOVNC_PATH="/usr/share/novnc"
+    elif [ -f "/usr/share/webapps/novnc/vnc.html" ]; then
+        NOVNC_PATH="/usr/share/webapps/novnc"
+    else
+        log "ERROR" "noVNC web files were not found." "$RED"
+        return 1
+    fi
+
+    start_vnc || return 1
+    log "INFO" "Starting noVNC on port $NOVNC_PORT..." "$YELLOW"
+    websockify --web="$NOVNC_PATH" "$NOVNC_PORT" "127.0.0.1:$VNC_PORT" </dev/null &
+    novnc_pid=$!
+    sleep 1
+    if ! kill -0 "$novnc_pid" 2>/dev/null; then
+        wait "$novnc_pid" 2>/dev/null
+        log "ERROR" "noVNC failed to start on port $NOVNC_PORT." "$RED"
+        return 1
+    fi
+    log "SUCCESS" "noVNC started on port $NOVNC_PORT" "$GREEN"
+    log "INFO" "Open in browser: http://<server-ip>:$NOVNC_PORT/vnc.html" "$YELLOW"
 }
 
 stop_novnc() {
     log "INFO" "Stopping noVNC..." "$YELLOW"
     pkill -f "websockify" > /dev/null 2>&1
     log "SUCCESS" "noVNC stopped." "$GREEN"
-}
-
-install_cloudflared() {
-    if command -v cloudflared > /dev/null 2>&1; then
-        return 0
-    fi
-    
-    log "INFO" "Installing cloudflared..." "$YELLOW"
-    
-    arch=$(uname -m)
-    case "$arch" in
-        x86_64) cf_arch="amd64" ;;
-        aarch64) cf_arch="arm64" ;;
-        armv7l) cf_arch="arm" ;;
-        *) 
-            log "ERROR" "Unsupported architecture: $arch" "$RED"
-            return 1
-            ;;
-    esac
-    
-    cf_url="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${cf_arch}"
-    
-    if command -v wget > /dev/null 2>&1; then
-        wget -q -O /usr/local/bin/cloudflared "$cf_url"
-    elif command -v curl > /dev/null 2>&1; then
-        curl -sL -o /usr/local/bin/cloudflared "$cf_url"
-    else
-        log "ERROR" "wget or curl required to download cloudflared" "$RED"
-        return 1
-    fi
-    
-    chmod +x /usr/local/bin/cloudflared
-    log "SUCCESS" "cloudflared installed" "$GREEN"
-}
-
-start_tunnel() {
-    if [ ! -f "$GUI_CONFIG_FILE" ]; then
-        log "ERROR" "GUI not installed. Run 'install-gui' first." "$RED"
-        return 1
-    fi
-    
-    if pgrep -f "cloudflared.*tunnel" > /dev/null 2>&1; then
-        log "WARNING" "Tunnel is already running." "$YELLOW"
-        return 0
-    fi
-    
-    install_cloudflared || return 1
-    
-    parse_gui_config
-    
-    if ! pgrep -f "websockify" > /dev/null 2>&1; then
-        start_novnc
-        sleep 3
-    fi
-    
-    retries=0
-    while [ $retries -lt 10 ]; do
-        if netstat -tln 2>/dev/null | grep -q ":$NOVNC_PORT " || ss -tln 2>/dev/null | grep -q ":$NOVNC_PORT "; then
-            break
-        fi
-        sleep 1
-        retries=$((retries + 1))
-    done
-    
-    if [ $retries -eq 10 ]; then
-        log "ERROR" "noVNC not listening on port $NOVNC_PORT after 10 seconds" "$RED"
-        return 1
-    fi
-    
-    log "INFO" "Starting Cloudflare tunnel for noVNC (port $NOVNC_PORT)..." "$YELLOW"
-    
-    TUNNEL_LOG="/tmp/cloudflared.log"
-    cloudflared tunnel --url "http://localhost:$NOVNC_PORT" > "$TUNNEL_LOG" 2>&1 &
-    
-    sleep 5
-    
-    TUNNEL_URL=$(grep -o 'https://[^[:space:]]*\.trycloudflare\.com' "$TUNNEL_LOG" | head -1)
-    
-    if [ -n "$TUNNEL_URL" ]; then
-        log "SUCCESS" "Tunnel started!" "$GREEN"
-        printf "\n${CYAN}========================================${NC}\n"
-        printf "${GREEN}noVNC URL: ${WHITE}${TUNNEL_URL}/vnc.html${NC}\n"
-        printf "${CYAN}========================================${NC}\n\n"
-        log "INFO" "Share this URL to access your desktop from anywhere" "$YELLOW"
-    else
-        log "WARNING" "Tunnel started but URL not yet available" "$YELLOW"
-        log "INFO" "Check $TUNNEL_LOG for the URL" "$YELLOW"
-    fi
-}
-
-stop_tunnel() {
-    log "INFO" "Stopping Cloudflare tunnel..." "$YELLOW"
-    pkill -f "cloudflared.*tunnel" > /dev/null 2>&1
-    log "SUCCESS" "Tunnel stopped." "$GREEN"
 }
 
 gui_status() {
@@ -488,15 +358,15 @@ gui_status() {
     
     parse_gui_config
     
-    printf "  Desktop: $GUI_DE_STARTUP\n\n"
+    printf '  Desktop: %s\n\n' "$GUI_DE_STARTUP"
     
     printf "  ${YELLOW}VNC:${NC}\n"
-    if pgrep -f "Xvnc" > /dev/null 2>&1 || pgrep -f "Xtigervnc" > /dev/null 2>&1 || pgrep -f "x11vnc" > /dev/null 2>&1; then
+    if vnc_is_running; then
         printf "    Status: ${GREEN}Running${NC}\n"
     else
         printf "    Status: ${RED}Stopped${NC}\n"
     fi
-    printf "    Port: $VNC_PORT\n\n"
+    printf '    Port: %s\n\n' "$VNC_PORT"
     
     printf "  ${YELLOW}noVNC:${NC}\n"
     if pgrep -f "websockify" > /dev/null 2>&1; then
@@ -504,69 +374,71 @@ gui_status() {
     else
         printf "    Status: ${RED}Stopped${NC}\n"
     fi
-    printf "    Port: $NOVNC_PORT\n\n"
-    
-    printf "  ${YELLOW}Tunnel:${NC}\n"
-    if pgrep -f "cloudflared.*tunnel" > /dev/null 2>&1; then
-        printf "    Status: ${GREEN}Running${NC}\n"
-        TUNNEL_URL=$(grep -o 'https://[^[:space:]]*\.trycloudflare\.com' /tmp/cloudflared.log 2>/dev/null | head -1)
-        if [ -n "$TUNNEL_URL" ]; then
-            printf "    URL: ${TUNNEL_URL}/vnc.html\n"
-        fi
-    else
-        printf "    Status: ${RED}Stopped${NC}\n"
-    fi
-    printf "\n"
+    printf '    Port: %s\n' "$NOVNC_PORT"
 }
 
 # Function to install SSH from the repository
 install_ssh() {
     # Check if SSH is already installed
-    if [ -f "/usr/local/bin/ssh" ]; then
+    if [ -s "/usr/local/bin/ssh" ]; then
         log "ERROR" "SSH is already installed." "$RED"
         return 1
     fi
 
     # Install wget if not found
-    if ! command -v wget &> /dev/null; then
+    if ! command -v wget > /dev/null 2>&1; then
         log "INFO" "Installing wget." "$YELLOW"
-        install_wget
+        install_wget || return 1
     fi
     
     log "INFO" "Installing SSH." "$YELLOW"
     
     # Determine the architecture
-    arch=$(detect_architecture)
+    arch=$(detect_architecture) || return 1
     
     # URL to download the SSH binary
     url="https://github.com/ysdragon/ssh/releases/latest/download/ssh-$arch"
     
-    # Download the SSH binary
-    wget -q -O /usr/local/bin/ssh "$url" || {
-        log "ERROR" "Failed to download SSH." "$RED"
+    mkdir -p /usr/local/bin || return 1
+    ssh_download=$(mktemp /usr/local/bin/.ssh.XXXXXX) || return 1
+    if ! wget -q -O "$ssh_download" "$url" ||
+        [ ! -s "$ssh_download" ] ||
+        ! chmod +x "$ssh_download" ||
+        ! mv -f "$ssh_download" /usr/local/bin/ssh; then
+        rm -f "$ssh_download"
+        log "ERROR" "Failed to download or install SSH." "$RED"
         return 1
-    }
-    
-    # Make the binary executable
-    chmod +x /usr/local/bin/ssh || {
-        log "ERROR" "Failed to make ssh executable." "$RED"
-        return 1
-    }    
+    fi
 
     log "SUCCESS" "SSH installed successfully." "$GREEN"
 }
 
-# Function to show system status
+print_system_versions() {
+    os_name=$(
+        if [ -r /etc/os-release ]; then
+            . /etc/os-release
+        elif [ -r /usr/lib/os-release ]; then
+            . /usr/lib/os-release
+        fi
+        printf '%s' "${PRETTY_NAME:-${NAME:-Linux}${VERSION_ID:+ $VERSION_ID}}"
+    )
+    printf 'OS: %s\nKernel: %s\nArchitecture: %s\n' "$os_name" "$(uname -r)" "$(uname -m)"
+    if [ -n "${PROOT_VERSION:-}" ]; then
+        printf 'PRoot: %s\n' "$PROOT_VERSION"
+    fi
+}
+
 show_system_status() {
-    log "INFO" "System Status:" "$GREEN"
+    print_system_versions
+    printf '\n'
     uptime
-    free -h
+    free -h 2>/dev/null || free
     df -h
-    ps aux --sort=-%mem | head -n 10
+    { ps aux --sort=-%mem 2>/dev/null || ps; } | head -n 10
 }
 
 # Function to create a backup
-create_backup() {
+create_backup() (
     # Check if tar is installed
     if ! command -v tar > /dev/null 2>&1; then
         log "ERROR" "tar is not installed. Please install tar first." "$RED"
@@ -574,29 +446,41 @@ create_backup() {
     fi
 
     backup_file="/backup_$(date +%Y%m%d%H%M%S).tar.gz"
-    exclude_file="/tmp/exclude-list.txt"
+    if [ -e "$backup_file" ]; then
+        log "ERROR" "Backup already exists at $backup_file." "$RED"
+        return 1
+    fi
+    backup_archive=$(mktemp "$backup_file.XXXXXX") || return 1
+    exclude_file=$(mktemp /tmp/vps-backup-excludes.XXXXXX) || {
+        rm -f "$backup_archive"
+        return 1
+    }
+    trap 'rm -f "$backup_archive" "$exclude_file"' EXIT
+    trap 'exit 1' HUP INT TERM
 
     # Create a file with a list of patterns to exclude. This is more
     # compatible with different versions of tar, including busybox tar.
     # We use relative paths for exclusion as we'll be running tar from /.
-    cat > "$exclude_file" <<EOF
+    cat > "$exclude_file" <<EOF || return 1
 ./${backup_file#/}
+./${backup_archive#/}
 ./proc
 ./tmp
 ./dev
 ./sys
 ./run
 ./vps.config
-${exclude_file#/}
 EOF
 
     log "INFO" "Starting backup process..." "$YELLOW"
-    (cd / && tar --numeric-owner -czf "$backup_file" -X "$exclude_file" .) > /dev/null 2>&1
-    log "SUCCESS" "Backup created at $backup_file" "$GREEN"
-
-    # Clean up the exclude file
-    rm -f "$exclude_file"
-}
+    if cd / && tar --numeric-owner -czf "$backup_archive" -X "$exclude_file" . &&
+        mv "$backup_archive" "$backup_file"; then
+        log "SUCCESS" "Backup created at $backup_file" "$GREEN"
+    else
+        log "ERROR" "Backup failed." "$RED"
+        return 1
+    fi
+)
 
 # Function to restore a backup
 restore_backup() {
@@ -616,169 +500,64 @@ restore_backup() {
 
     if [ -f "/$backup_file" ]; then
         log "INFO" "Starting restore process..." "$YELLOW"
-        tar --numeric-owner -xzf "/$backup_file" -C / --exclude="$backup_file" > /dev/null 2>&1
-        log "SUCCESS" "Backup restored from $backup_file" "$GREEN"
+        if tar --numeric-owner -xzf "/$backup_file" -C / --exclude="$backup_file"; then
+            log "SUCCESS" "Backup restored from $backup_file" "$GREEN"
+        else
+            log "ERROR" "Restore failed for $backup_file." "$RED"
+            return 1
+        fi
     else
         log "ERROR" "Backup file not found: $backup_file" "$RED"
     fi
 }
 
-# Function to print initial banner
-print_banner() {
-    print_main_banner
-}
-
-# Function to print a beautiful help message
-print_help_message() {
-    print_help_banner
-}
-
-# Function to handle command execution
 execute_command() {
-    cmd="$1"
-    user="$2"
-    
-    # Save command to history
-    save_to_history "$cmd"
-    
-    # Handle special commands
-    case "$cmd" in
-        "clear"|"cls")
-            printf "\033c"
-            print_prompt "$user"
-            return 0
-        ;;
-        "exit")
-            cleanup
-        ;;
-        "history")
-            if [ -f "$HISTORY_FILE" ]; then
-                cat "$HISTORY_FILE"
-            fi
-            print_prompt "$user"
-            return 0
-        ;;
-        "reinstall")
+    save_to_history "$1"
+
+    case "$1" in
+        '') ;;
+        clear|cls) printf '\033[2J\033[H' ;;
+        exit) cleanup ;;
+        history) [ ! -f "$HISTORY_FILE" ] || cat "$HISTORY_FILE" ;;
+        reinstall)
             reinstall
             exit 2
-        ;;
-        "sudo"*|"su"*)
+            ;;
+        sudo|su|sudo[[:blank:]]*|su[[:blank:]]*)
             log "ERROR" "You are already running as root." "$RED"
-            print_prompt "$user"
-            return 0
-        ;;
-        "install-ssh")
-            install_ssh
-            print_prompt "$user"
-            return 0
-        ;;
-        "install-gui")
-            install_gui
-            print_prompt "$user"
-            return 0
-        ;;
-        "reinstall-gui")
-            reinstall_gui
-            print_prompt "$user"
-            return 0
-        ;;
-        "start-vnc")
-            start_vnc
-            print_prompt "$user"
-            return 0
-        ;;
-        "stop-vnc")
-            stop_vnc
-            print_prompt "$user"
-            return 0
-        ;;
-        "start-novnc")
-            start_novnc
-            print_prompt "$user"
-            return 0
-        ;;
-        "stop-novnc")
-            stop_novnc
-            print_prompt "$user"
-            return 0
-        ;;
-        "start-tunnel")
-            start_tunnel
-            print_prompt "$user"
-            return 0
-        ;;
-        "stop-tunnel")
-            stop_tunnel
-            print_prompt "$user"
-            return 0
-        ;;
-        "gui-status")
-            gui_status
-            print_prompt "$user"
-            return 0
-        ;;
-        "status")
-            show_system_status
-            print_prompt "$user"
-            return 0
-        ;;
-        "backup")
-            create_backup
-            print_prompt "$user"
-            return 0
-        ;;
-        "restore")
-            log "ERROR" "No backup file specified. Usage: restore <backup_file>" "$RED"
-            print_prompt "$user"
-            return 0
-        ;;
-        "restore "*)
-            backup_file=$(echo "$cmd" | cut -d' ' -f2-)
-            restore_backup "$backup_file"
-            print_prompt "$user"
-            return 0
-        ;;
-        "help")
-            print_help_message
-            print_prompt "$user"
-            return 0
-        ;;
-        *)
-            eval "$cmd"
-            print_prompt "$user"
-            return 0
-        ;;
+            ;;
+        install-ssh) install_ssh ;;
+        install-gui) install_gui; [ "$?" -ne 2 ] || cleanup ;;
+        reinstall-gui) reinstall_gui; [ "$?" -ne 2 ] || cleanup ;;
+        start-vnc) start_vnc ;;
+        stop-vnc) stop_vnc ;;
+        start-novnc) start_novnc ;;
+        stop-novnc) stop_novnc ;;
+        gui-status) gui_status ;;
+        status) show_system_status ;;
+        backup) create_backup ;;
+        restore) restore_backup "" ;;
+        "restore "*) restore_backup "${1#restore }" ;;
+        help) print_help_banner ;;
+        *) eval "$1" ;;
     esac
 }
 
-# Function to run command prompt for a specific user
-run_prompt() {
-    user="$1"
-    read -r cmd
-    
-    execute_command "$cmd" "$user"
-    print_prompt "$user"
-}
-
-# Create history file if it doesn't exist
-touch "$HISTORY_FILE"
-
-# Set up trap for clean exit
 trap cleanup INT TERM
 
-# Print the initial banner
-print_banner
+printf 'Pterodactyl VPS Egg\n'
+print_system_versions
+log "INFO" "Type 'help' to view the available commands." "$YELLOW"
+printf 'Starting VPS console\n'
 
-# Print the initial instructions
-print_instructions
+if ! sh /autorun.sh; then
+    log "ERROR" "autorun.sh failed. The console is available." "$RED"
+fi
 
-# Print initial command
-printf "${GREEN}root@${HOSTNAME}${NC}:${RED}$(get_formatted_dir)${NC}#\n"
-
-# Execute autorun.sh
-sh "/autorun.sh"
-
-# Main command loop
-while true; do
-    run_prompt "user"
+print_prompt
+while read_console_line; do
+    execute_command "$REPLY"
+    print_prompt
 done
+
+cleanup
